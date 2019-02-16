@@ -1,0 +1,14 @@
+[package]
+name = "froop"
+version = "0.1.0"
+authors = ["Martin Algesten <martin@algesten.se>"]
+edition = "2018"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.2"
+
+[[bench]]
+name = "stream_benchmark"
+harness = false
