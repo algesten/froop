@@ -3,6 +3,7 @@ name = "froop"
 version = "0.1.0"
 authors = ["Martin Algesten <martin@algesten.se>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
 
