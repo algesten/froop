@@ -12,12 +12,23 @@ fn map_benchmark(c: &mut Criterion) {
     c.bench_function("map", move |b| b.iter(|| sink.update(42)));
 }
 
-// fn fold_benchmark(c: &mut Criterion) {
-//     let sink: Sink<u32> = Sink::new();
-//     let fold = sink.stream().fold(0, |prev, cur| prev + cur);
-//     let _ = fold.subscribe(|_| {});
-//     c.bench_function("fold", move |b| b.iter(|| sink.update(1)));
-// }
+fn imitator_benchmark(c: &mut Criterion) {
+    let imitator = Stream::imitator();
 
-criterion_group!(benches, map_benchmark); // , fold_benchmark);
+    let fold = imitator
+        .stream()
+        .fold(1, |p, c| if *c < 10 { p + c } else { p })
+        .dedupe();
+
+    let sink = Stream::sink();
+
+    let merge = Stream::merge(vec![fold, sink.stream()]);
+    imitator.imitate(&merge);
+
+    let _ = merge.subscribe(|_| {});
+
+    c.bench_function("imitator", move |b| b.iter(|| sink.update(1)));
+}
+
+criterion_group!(benches, map_benchmark, imitator_benchmark);
 criterion_main!(benches);
