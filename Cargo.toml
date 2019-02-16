@@ -4,6 +4,11 @@ version = "0.1.0"
 authors = ["Martin Algesten <martin@algesten.se>"]
 edition = "2018"
 license = "MIT"
+description = "A functional reactive stream library for rust"
+readme = "README.md"
+keywords = ["frp", "functional", "fp", "reactive", "stream"]
+categories = ["data-structures"]
+repository = "https://github.com/algesten/froop"
 
 [dependencies]
 
