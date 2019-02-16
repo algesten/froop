@@ -33,9 +33,9 @@ macro_rules! mk_combine {
                         {
                             let dispatch = dispatch.clone();
                             let inner_clone = inner_clone.clone();
-                            $rvar.internal_subscribe(move |_, imit| {
+                            $rvar.internal_subscribe(move |_| {
                                 let v = dispatch.clone()();
-                                inner_clone.lock().update_owned(v, imit);
+                                inner_clone.lock().update_owned(v);
                         })
                         }
                     ),+

@@ -92,7 +92,7 @@ mod inner;
 mod peg;
 mod sub;
 
-use inner::{MemoryMode, SafeInner};
+use inner::{MemoryMode, SafeInner, IMITATORS};
 use peg::Peg;
 pub use sub::Subscription;
 
@@ -239,20 +239,17 @@ impl<T> Stream<T> {
     ///
     /// handle.join();
     /// ```
-    pub fn subscribe<F>(&self, mut f: F) -> Subscription
+    pub fn subscribe<F>(&self, f: F) -> Subscription
     where
         F: FnMut(Option<&T>) + 'static,
     {
-        let peg = self.inner.lock().add(move |t, _| f(t));
+        let peg = self.inner.lock().add(f);
         peg.keep_mode();
         Subscription::new(peg)
     }
 
     /// Internal subscribe that stops subscribing if the subscription goes out of scope.
-    fn internal_subscribe<F: FnMut(Option<&T>, &mut Vec<Box<FnMut()>>) + 'static>(
-        &self,
-        f: F,
-    ) -> Peg {
+    fn internal_subscribe<F: FnMut(Option<&T>) + 'static>(&self, f: F) -> Peg {
         let mut peg = self.inner.lock().add(f);
         peg.add_related(self.peg.clone());
         peg
@@ -282,7 +279,7 @@ impl<T> Stream<T> {
     {
         let state = Arc::new((Mutex::new((false, Some(vec![]))), Condvar::new()));
         let clone = state.clone();
-        let peg = self.internal_subscribe(move |t, _| {
+        let peg = self.internal_subscribe(move |t| {
             let mut lock = clone.0.lock().unwrap();
             if let Some(t) = t {
                 if let Some(v) = lock.1.as_mut() {
@@ -352,7 +349,7 @@ impl<T> Stream<T> {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
         let mut prev: Option<U> = None;
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             if let Some(t) = t {
                 let propagate = match (prev.take(), f(t)) {
                     (None, u) => {
@@ -372,10 +369,10 @@ impl<T> Stream<T> {
                     }
                 };
                 if propagate {
-                    inner_clone.lock().update_borrowed(Some(t), imit);
+                    inner_clone.lock().update_borrowed(Some(t));
                 }
             } else {
-                inner_clone.lock().update_borrowed(t, imit);
+                inner_clone.lock().update_borrowed(t);
             }
         });
         Stream { peg, inner }
@@ -435,7 +432,7 @@ impl<T> Stream<T> {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
         let mut dropping = true;
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             if let Some(t) = t {
                 if dropping && !f(t) {
                     dropping = false;
@@ -443,9 +440,9 @@ impl<T> Stream<T> {
                 if dropping {
                     return;
                 }
-                inner_clone.lock().update_borrowed(Some(t), imit);
+                inner_clone.lock().update_borrowed(Some(t));
             } else {
-                inner_clone.lock().update_borrowed(t, imit);
+                inner_clone.lock().update_borrowed(t);
             }
         });
         Stream { peg, inner }
@@ -474,13 +471,13 @@ impl<T> Stream<T> {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone1 = inner.clone();
         let inner_clone2 = inner.clone();
-        let peg1 = other.internal_subscribe(move |o, imit| {
+        let peg1 = other.internal_subscribe(move |o| {
             if o.is_none() {
-                inner_clone1.lock().update_borrowed(None, imit);
+                inner_clone1.lock().update_borrowed(None);
             }
         });
-        let peg2 = self.internal_subscribe(move |t, imit| {
-            inner_clone2.lock().update_borrowed(t, imit);
+        let peg2 = self.internal_subscribe(move |t| {
+            inner_clone2.lock().update_borrowed(t);
         });
         let peg = Peg::many(vec![peg1, peg2]);
         Stream { peg, inner }
@@ -509,13 +506,13 @@ impl<T> Stream<T> {
     {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             if let Some(t) = t {
                 if f(t) {
-                    inner_clone.lock().update_borrowed(Some(t), imit);
+                    inner_clone.lock().update_borrowed(Some(t));
                 }
             } else {
-                inner_clone.lock().update_borrowed(t, imit);
+                inner_clone.lock().update_borrowed(t);
             }
         });
         Stream { peg, inner }
@@ -550,17 +547,17 @@ impl<T> Stream<T> {
     {
         let inner = SafeInner::new(MemoryMode::KeepUntilEnd, Some(seed));
         let inner_clone = inner.clone();
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             if let Some(t) = t {
                 let mut lock = inner_clone.lock();
                 if let Some(prev) = lock.take_memory() {
                     let next = f(prev, t);
-                    lock.update_owned(Some(next), imit);
+                    lock.update_owned(Some(next));
                 } else {
                     panic!("fold without a previous value");
                 }
             } else {
-                inner_clone.lock().update_owned(None, imit);
+                inner_clone.lock().update_owned(None);
             }
         });
         Stream { peg, inner }
@@ -571,18 +568,21 @@ impl<T> Stream<T> {
     where
         T: Clone,
     {
-        self.internal_subscribe(move |t, imit| {
+        self.internal_subscribe(move |t| {
             let imitator_clone = imitator.clone();
             if t.is_some() {
                 let t_clone = t.cloned();
-                imit.push(Box::new(move || {
-                    // this is one clone too many. if we could use
-                    // Box<FnOnce> on stable, we would do that instead
-                    let t = t_clone.clone();
-                    imitator_clone.lock().update_and_imitate(t)
-                }));
+                IMITATORS.with(|imit_cell| {
+                    let mut imit = imit_cell.borrow_mut();
+                    imit.push(Box::new(move || {
+                        // this is one clone too many. if we could use
+                        // Box<FnOnce> on stable, we would do that instead
+                        let t = t_clone.clone();
+                        imitator_clone.lock().update_owned(t.clone());
+                    }));
+                });
             } else {
-                imitator_clone.lock().update_and_imitate(None);
+                imitator_clone.lock().update_owned(None);
             }
         })
     }
@@ -608,16 +608,16 @@ impl<T> Stream<T> {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
         let last = Mutex::new(None);
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             let mut lock = last.lock().unwrap();
             if t.is_some() {
                 *lock = t.cloned();
             } else {
                 let mut ilock = inner_clone.lock();
                 if let Some(l) = lock.take() {
-                    ilock.update_owned(Some(l), imit);
+                    ilock.update_owned(Some(l));
                 }
-                ilock.update_owned(None, imit);
+                ilock.update_owned(None);
             }
         });
         Stream { peg, inner }
@@ -646,12 +646,12 @@ impl<T> Stream<T> {
     {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             if let Some(t) = t {
                 let u = f(t);
-                inner_clone.lock().update_owned(Some(u), imit);
+                inner_clone.lock().update_owned(Some(u));
             } else {
-                inner_clone.lock().update_owned(None, imit);
+                inner_clone.lock().update_owned(None);
             }
         });
         Stream { peg, inner }
@@ -712,12 +712,12 @@ impl<T> Stream<T> {
             .map(|stream| {
                 let inner_clone = inner_clone.clone();
                 let active = active.clone();
-                stream.internal_subscribe(move |t, imit| {
+                stream.internal_subscribe(move |t| {
                     if t.is_some() {
-                        inner_clone.lock().update_borrowed(t, imit);
+                        inner_clone.lock().update_borrowed(t);
                     } else if active.fetch_sub(1, Ordering::SeqCst) == 1 {
                         // all streams are ended. close the merged one
-                        inner_clone.lock().update_borrowed(None, imit);
+                        inner_clone.lock().update_borrowed(None);
                     }
                 })
             })
@@ -757,9 +757,9 @@ impl<T> Stream<T> {
     {
         let inner = SafeInner::new(mode, None);
         let inner_clone = inner.clone();
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             let t = t.cloned();
-            inner_clone.lock().update_owned(t, imit);
+            inner_clone.lock().update_owned(t);
         });
         Stream { peg, inner }
     }
@@ -789,21 +789,21 @@ impl<T> Stream<T> {
     pub fn sample_combine<U>(&self, other: &Stream<U>) -> Stream<(T, U)>
     where
         T: Clone,
-        U: std::fmt::Debug + Clone,
+        U: Clone,
     {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
         let rem = other.remember_mode(MemoryMode::KeepAfterEnd);
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             if let Some(t) = t {
                 let rlock = rem.inner.lock();
                 if let Some(u) = rlock.peek_memory().as_ref() {
                     // we have both t and u
                     let v = (t.clone(), u.clone());
-                    inner_clone.lock().update_owned(Some(v), imit);
+                    inner_clone.lock().update_owned(Some(v));
                 }
             } else {
-                inner_clone.lock().update_borrowed(None, imit);
+                inner_clone.lock().update_borrowed(None);
             }
         });
         Stream { peg, inner }
@@ -828,8 +828,8 @@ impl<T> Stream<T> {
     pub fn start_with(&self, start: T) -> Stream<T> {
         let inner = SafeInner::new(MemoryMode::KeepUntilEnd, Some(start));
         let inner_clone = inner.clone();
-        let peg = self.internal_subscribe(move |t, imit| {
-            inner_clone.lock().update_borrowed(t, imit);
+        let peg = self.internal_subscribe(move |t| {
+            inner_clone.lock().update_borrowed(t);
         });
         Stream { peg, inner }
     }
@@ -883,15 +883,15 @@ impl<T> Stream<T> {
     {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
-        let peg = self.internal_subscribe(move |t, imit| {
+        let peg = self.internal_subscribe(move |t| {
             if let Some(t) = t {
                 if f(t) {
-                    inner_clone.lock().update_borrowed(Some(t), imit);
+                    inner_clone.lock().update_borrowed(Some(t));
                 } else {
-                    inner_clone.lock().update_borrowed(None, imit);
+                    inner_clone.lock().update_borrowed(None);
                 }
             } else {
-                inner_clone.lock().update_borrowed(t, imit);
+                inner_clone.lock().update_borrowed(t);
             }
         });
         Stream { peg, inner }
@@ -916,7 +916,7 @@ impl<T> Stream<T> {
     pub fn wait(&self) {
         let pair = Arc::new((Mutex::new(false), Condvar::new()));
         let pair2 = pair.clone();
-        let _sub = self.internal_subscribe(move |t, _| {
+        let _sub = self.internal_subscribe(move |t| {
             if t.is_none() {
                 let mut lock = pair2.0.lock().unwrap();
                 *lock = true;
@@ -967,19 +967,19 @@ impl<T> Stream<Stream<T>> {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
         let mut ipeg = None;
-        let peg = self.internal_subscribe(move |ts, imit| {
+        let peg = self.internal_subscribe(move |ts| {
             if let Some(ts) = ts {
                 let inner_clone = inner_clone.clone();
-                ipeg = Some(ts.internal_subscribe(move |tv, imit| {
+                ipeg = Some(ts.internal_subscribe(move |tv| {
                     if let Some(tv) = tv {
-                        inner_clone.lock().update_borrowed(Some(tv), imit);
+                        inner_clone.lock().update_borrowed(Some(tv));
                     } else {
                         // inner stream end does nothing to outer
                     }
                 }));
             } else {
                 ipeg.take();
-                inner_clone.lock().update_borrowed(None, imit);
+                inner_clone.lock().update_borrowed(None);
             }
         });
         Stream { peg, inner }
@@ -1018,19 +1018,19 @@ impl<T> Stream<Stream<T>> {
     pub fn flatten_concurrently(&self) -> Stream<T> {
         let inner = SafeInner::new(MemoryMode::NoMemory, None);
         let inner_clone = inner.clone();
-        let peg = self.internal_subscribe(move |ts, imit| {
+        let peg = self.internal_subscribe(move |ts| {
             if let Some(ts) = ts {
                 let inner_clone = inner_clone.clone();
-                let ipeg = ts.internal_subscribe(move |tv, imit| {
+                let ipeg = ts.internal_subscribe(move |tv| {
                     if let Some(tv) = tv {
-                        inner_clone.lock().update_borrowed(Some(tv), imit);
+                        inner_clone.lock().update_borrowed(Some(tv));
                     } else {
                         // inner stream end does nothing to outer
                     }
                 });
                 ipeg.keep_mode(); // we drop ipeg, but keep listening
             } else {
-                inner_clone.lock().update_borrowed(None, imit);
+                inner_clone.lock().update_borrowed(None);
             }
         });
         Stream { peg, inner }
@@ -1286,6 +1286,26 @@ mod test {
         sink.update(42);
         sink.end();
         assert_eq!(coll.wait(), vec!["|".to_string(), "| 42".to_string()]);
+    }
+
+    #[test]
+    fn test_imitate_cycle() {
+        let imitator = Stream::imitator();
+
+        let fold = imitator
+            .stream()
+            .fold(1, |p, c| if *c < 10 { p + c } else { p })
+            .dedupe();
+
+        let sink = Stream::sink();
+
+        let merge = Stream::merge(vec![fold, sink.stream()]);
+        imitator.imitate(&merge);
+
+        let coll = merge.collect();
+
+        sink.update(1);
+        assert_eq!(coll.take(), vec![1, 2, 4, 8, 16]);
     }
 
 }

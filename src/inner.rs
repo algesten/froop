@@ -1,7 +1,10 @@
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::peg::Peg;
 use crate::sub::Listeners;
+
+thread_local!(pub static IMITATORS: RefCell<Vec<Box<dyn FnMut()>>> = RefCell::new(vec![]));
 
 pub struct SafeInner<T: 'static>(Arc<Mutex<Inner<T>>>);
 
@@ -51,19 +54,15 @@ impl<T> Inner<T> {
         self.memory_mode
     }
 
-    pub fn add<F: FnMut(Option<&T>, &mut Vec<Box<FnMut()>>) + 'static>(
-        &mut self,
-        mut listener: F,
-    ) -> Peg {
+    pub fn add<F: FnMut(Option<&T>) + 'static>(&mut self, mut listener: F) -> Peg {
         if !self.alive {
-            let mut fake = vec![];
-            listener(None, &mut fake);
+            listener(None);
             return Peg::new_fake();
         }
         if self.memory_mode.is_memory() {
-            let mut imit = vec![];
             if let Some(v) = self.memory.as_ref() {
-                listener(Some(v), &mut imit);
+                // FIXME thread local
+                listener(Some(v));
             }
         }
         self.listeners.add(listener)
@@ -73,18 +72,26 @@ impl<T> Inner<T> {
         if !self.alive {
             return;
         }
-        let mut imit = vec![];
-        self.update_owned(t, &mut imit);
-        for mut i in imit {
-            i();
+        self.update_owned(t);
+        loop {
+            let mut imit = vec![];
+            IMITATORS.with(|imit_cell| {
+                imit = imit_cell.borrow_mut().split_off(0);
+            });
+            if imit.is_empty() {
+                break;
+            }
+            for mut i in imit {
+                i();
+            }
         }
     }
 
-    pub fn update_owned(&mut self, t: Option<T>, imit: &mut Vec<Box<FnMut()>>) {
+    pub fn update_owned(&mut self, t: Option<T>) {
         if !self.alive {
             return;
         }
-        self.listeners.iter(|l| l(t.as_ref(), imit));
+        self.listeners.iter(|l| l(t.as_ref()));
         let is_end = t.is_none();
         match self.memory_mode {
             MemoryMode::NoMemory => (),
@@ -102,11 +109,11 @@ impl<T> Inner<T> {
         }
     }
 
-    pub fn update_borrowed(&mut self, t: Option<&T>, imit: &mut Vec<Box<FnMut()>>) {
+    pub fn update_borrowed(&mut self, t: Option<&T>) {
         if !self.alive {
             return;
         }
-        self.listeners.iter(|l| l(t, imit));
+        self.listeners.iter(|l| l(t));
         let is_end = t.is_none();
         if is_end {
             self.end();

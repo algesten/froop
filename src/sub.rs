@@ -7,7 +7,7 @@ pub struct Listeners<T: 'static> {
 }
 
 #[doc(hidden)]
-pub type Listener<T> = Box<dyn FnMut(Option<&T>, &mut Vec<Box<FnMut()>>)>;
+pub type Listener<T> = Box<dyn FnMut(Option<&T>)>;
 
 impl<T> Listeners<T> {
     pub fn new() -> Self {
@@ -15,10 +15,7 @@ impl<T> Listeners<T> {
     }
 
     /// Add a new listener.
-    pub fn add<F: FnMut(Option<&T>, &mut Vec<Box<FnMut()>>) + 'static>(
-        &mut self,
-        listener: F,
-    ) -> Peg {
+    pub fn add<F: FnMut(Option<&T>) + 'static>(&mut self, listener: F) -> Peg {
         let boxed: Listener<T> = Box::new(listener);
         let (val, peg) = Pegged::new_pair(boxed);
         self.ls.push(val);
