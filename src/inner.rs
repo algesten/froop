@@ -57,12 +57,13 @@ impl<T> Inner<T> {
     pub fn add<F: FnMut(Option<&T>) + 'static>(&mut self, mut listener: F) -> Peg {
         if !self.alive {
             listener(None);
+            self.run_imitators();
             return Peg::new_fake();
         }
         if self.memory_mode.is_memory() {
             if let Some(v) = self.memory.as_ref() {
-                // FIXME thread local
                 listener(Some(v));
+                self.run_imitators();
             }
         }
         self.listeners.add(listener)
@@ -73,6 +74,10 @@ impl<T> Inner<T> {
             return;
         }
         self.update_owned(t);
+        self.run_imitators();
+    }
+
+    fn run_imitators(&self) {
         loop {
             let mut imit = vec![];
             IMITATORS.with(|imit_cell| {
