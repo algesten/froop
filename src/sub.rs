@@ -42,6 +42,48 @@ impl<T> Listeners<T> {
 }
 
 /// A subscription is a receipt for adding a listener to a stream. Can be used to stop listening.
+///
+/// ## Subscription lifetimes
+///
+/// Every combinator _subscribes_ to events from its parent stream. It is basically the
+/// same as calling `.subscribe()` but with an important twist. Froop reference counts
+/// the number of children alive to determine when to unsubscribe.
+///
+/// Example:
+/// ```
+/// use froop::{Sink, Stream};
+///
+/// let sink: Sink<u32> = Stream::sink();
+/// let stream = sink.stream();
+///
+/// // map is subscribed (once) to stream
+/// let map = stream.map(|v| v * 2);
+/// let map2 = map.clone();
+///
+/// drop(map);
+/// drop(map2);
+/// // map is unsubscribed from stream
+/// ```
+///
+/// This is different to regular subscriptions where we must explicitly call `.unsubscribe()`
+/// on the returned subscription instance.
+///
+/// Example:
+/// ```
+/// use froop::{Sink, Stream};
+///
+/// let sink: Sink<u32> = Stream::sink();
+/// let stream = sink.stream();
+///
+/// // subscribed to stream
+/// let sub = stream.subscribe(|v| if let Some(v) = v {
+///     println!("{}", v)
+/// });
+///
+/// drop(sub);
+/// // still subscribed to stream
+/// ```
+///
 #[derive(Clone)]
 pub struct Subscription {
     peg: Peg,

@@ -55,9 +55,9 @@
 //!
 //! _Froop has no queues_
 //!
-//! Every `Sink::update()` of data into the tree of operations executes synchronously. Froop
-//! has no operators that dispatches "later", i.e. no `delay()` or other time shifting
-//! operations.
+//! Every [`Sink::update()`](struct.Sink.html#method.update) of data into the tree of
+//! operations executes synchronously. Froop has no operators that dispatches "later",
+//! i.e. no `delay()` or other time shifting operations.
 //!
 //! That also means froop also has no internal threads, futures or otherwise.
 //!
@@ -81,6 +81,10 @@
 //! * Not require `Sync` and/or `Send` on operator functions.
 //! * Froop stream instances themselves are `Sync` and `Send`.
 //! * Impose a minimum of constraints the event value `T`.
+//!
+//! ## Subscription lifetimes
+//!
+//! See [`Subscription`](struct.Subscription.html#subscription-lifetimes)
 
 #![warn(clippy::all)]
 #![allow(clippy::new_without_default)]
@@ -98,7 +102,7 @@ use crate::inner::{MemoryMode, SafeInner, IMITATORS};
 use crate::peg::Peg;
 pub use crate::sub::Subscription;
 
-/// A stream of values also called events. To create a stream see `Stream::sink()`.
+/// A stream of events, values in time.
 ///
 /// Streams have combinators to build "execution trees" working over events.
 ///
@@ -108,7 +112,9 @@ pub use crate::sub::Subscription;
 /// produced so that any new subscriber will syncronously receive the value.
 ///
 /// Streams with memory are explicitly created using
-/// `.remember()`, but also by other combinators such as `.fold()` and `.start_with()`.
+/// [`.remember()`](struct.Stream.html#method.remember), but also by other combinators
+/// such as [`.fold()`](struct.Stream.html#method.fold) and
+/// [`.start_with()`](struct.Stream.html#method.start_with).
 pub struct Stream<T: 'static> {
     #[allow(dead_code)]
     peg: Peg,
@@ -164,7 +170,9 @@ impl<T> Stream<T> {
     /// Create a stream that never emits any value and never ends.
     ///
     /// ```
-    /// let never: froop::Stream<u32> = froop::Stream::never();
+    /// use froop::Stream;
+    ///
+    /// let never: Stream<u32> = Stream::never();
     /// let coll = never.collect();
     /// assert_eq!(coll.take(), vec![]);
     /// ```
@@ -324,10 +332,12 @@ impl<T> Stream<T> {
     /// Dedupe stream by some extracted value.
     ///
     /// ```
+    /// use froop::{Stream, Sink};
+    ///
     /// #[derive(Clone, Debug)]
     /// struct Foo(&'static str, usize);
     ///
-    /// let sink: froop::Sink<Foo> = froop::Stream::sink();
+    /// let sink: Sink<Foo> = Stream::sink();
     ///
     /// // dedupe this stream of Foo on the contained usize
     /// let deduped = sink.stream().dedupe_by(|v| v.1);
@@ -453,8 +463,10 @@ impl<T> Stream<T> {
     /// Produce a stream that ends when some other stream ends.
     ///
     /// ```
-    /// let sink1 = froop::Stream::sink();
-    /// let sink2 = froop::Stream::sink();
+    /// use froop::Stream;
+    ///
+    /// let sink1 = Stream::sink();
+    /// let sink2 = Stream::sink();
     ///
     /// // ending shows values of sink1, but ends when sink2 does.
     /// let ending = sink1.stream().end_when(&sink2.stream());
@@ -770,8 +782,10 @@ impl<T> Stream<T> {
     /// On every event in this stream, combine with the last value of the other stream.
     ///
     /// ```
-    /// let sink1 = froop::Stream::sink();
-    /// let sink2 = froop::Stream::sink();
+    /// use froop::Stream;
+    ///
+    /// let sink1 = Stream::sink();
+    /// let sink2 = Stream::sink();
     ///
     /// let comb = sink1.stream().sample_combine(&sink2.stream());
     ///
@@ -941,9 +955,11 @@ impl<T> Stream<Stream<T>> {
     /// stream "interrupts" the previous stream.
     ///
     /// ```
-    /// let sink1 = froop::Stream::sink();
-    /// let sink2 = froop::Stream::sink();
-    /// let sink3 = froop::Stream::sink();
+    /// use froop::{Stream, Sink};
+    ///
+    /// let sink1: Sink<Stream<u32>> = Stream::sink();
+    /// let sink2: Sink<u32> = Stream::sink();
+    /// let sink3: Sink<u32> = Stream::sink();
     ///
     /// let flat = sink1.stream().flatten();
     ///
@@ -992,9 +1008,11 @@ impl<T> Stream<Stream<T>> {
     /// For each new stream, keep the previous, and subscribe to the new.
     ///
     /// ```
-    /// let sink1 = froop::Stream::sink();
-    /// let sink2 = froop::Stream::sink();
-    /// let sink3 = froop::Stream::sink();
+    /// use froop::{Stream, Sink};
+    ///
+    /// let sink1: Sink<Stream<u32>> = Stream::sink();
+    /// let sink2: Sink<u32> = Stream::sink();
+    /// let sink3: Sink<u32> = Stream::sink();
     ///
     /// let flat = sink1.stream().flatten_concurrently();
     ///
@@ -1041,7 +1059,7 @@ impl<T> Stream<Stream<T>> {
 
 include!("./comb.rs");
 
-/// A sink is a producer of events. Created via `Stream::sink()`.
+/// A sink is a producer of events. Created by [`Stream::sink()`](struct.Stream.html#method.sink).
 pub struct Sink<T: 'static> {
     inner: SafeInner<T>,
 }
@@ -1113,7 +1131,8 @@ impl<T> Sink<T> {
     }
 }
 
-/// The collector instance collects values from a stream.
+/// The collector instance collects values from a stream. Created by
+/// [`Stream::collect()`](struct.Stream.html#method.collect).
 pub struct Collector<T> {
     #[allow(dead_code)]
     peg: Peg,
