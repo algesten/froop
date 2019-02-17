@@ -92,9 +92,9 @@ mod inner;
 mod peg;
 mod sub;
 
-use inner::{MemoryMode, SafeInner, IMITATORS};
-use peg::Peg;
-pub use sub::Subscription;
+use crate::inner::{MemoryMode, SafeInner, IMITATORS};
+use crate::peg::Peg;
+pub use crate::sub::Subscription;
 
 /// A stream of values also called events. To create a stream see `Stream::sink()`.
 ///
@@ -751,6 +751,7 @@ impl<T> Stream<T> {
         self.remember_mode(MemoryMode::KeepUntilEnd)
     }
 
+    /// Internal remember where we can chose "mode"
     fn remember_mode(&self, mode: MemoryMode) -> Stream<T>
     where
         T: Clone,
@@ -846,7 +847,6 @@ impl<T> Stream<T> {
     /// sink.update(0);
     /// sink.update(1); // take2 ends here
     /// sink.update(2);
-    /// sink.update(3);
     ///
     /// assert_eq!(coll.wait(), vec![0, 1]);
     /// ```
@@ -1306,6 +1306,30 @@ mod test {
 
         sink.update(1);
         assert_eq!(coll.take(), vec![1, 2, 4, 8, 16]);
+    }
+
+    #[test]
+    fn test_combine() {
+        let sink1 = Stream::sink();
+        let sink2 = Stream::sink();
+
+        let comb = Stream::combine2(&sink1.stream(), &sink2.stream());
+
+        let coll = comb.collect();
+
+        sink1.update(0.0);
+        sink2.update(10);
+        sink1.update(1.0);
+        sink1.update(2.0);
+        sink2.update(11);
+        sink1.update(3.0);
+        sink1.end();
+        sink2.end();
+
+        assert_eq!(
+            coll.wait(),
+            vec![(0.0, 10), (1.0, 10), (2.0, 10), (2.0, 11), (3.0, 11)]
+        );
     }
 
 }
