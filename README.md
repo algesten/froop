@@ -20,7 +20,7 @@ defined by Conal Elliot, but as a paradigm that is both functional and reactive.
 
 ## Example
 
-```
+```rust
 use froop::{Sink, Stream};
 
 // A sink is an originator of events that form a stream.
