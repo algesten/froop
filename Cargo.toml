@@ -13,7 +13,7 @@ repository = "https://github.com/algesten/froop"
 [dependencies]
 
 [dev-dependencies]
-criterion = "0.2"
+criterion = "0.3"
 
 [[bench]]
 name = "stream_benchmark"
