@@ -12,7 +12,7 @@ impl<T> SafeInner<T> {
     pub(crate) fn new(memory_mode: MemoryMode, memory: Option<T>) -> Self {
         SafeInner(Arc::new(Mutex::new(Inner::new(memory_mode, memory))))
     }
-    pub(crate) fn lock<'a>(&'a self) -> MutexGuard<'a, Inner<T>> {
+    pub(crate) fn lock(&self) -> MutexGuard<Inner<T>> {
         self.0.lock().unwrap()
     }
 }
@@ -26,10 +26,7 @@ pub(crate) enum MemoryMode {
 
 impl MemoryMode {
     pub fn is_memory(self) -> bool {
-        match self {
-            MemoryMode::NoMemory => false,
-            _ => true,
-        }
+        !matches!(self, MemoryMode::NoMemory)
     }
 }
 
