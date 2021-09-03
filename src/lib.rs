@@ -592,7 +592,7 @@ impl<T> Stream<T> {
                         // this is one clone too many. if we could use
                         // Box<FnOnce> on stable, we would do that instead
                         let t = t_clone.clone();
-                        imitator_clone.lock().update_owned(t.clone());
+                        imitator_clone.lock().update_owned(t);
                     }));
                 });
             } else {
